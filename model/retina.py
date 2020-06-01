@@ -45,7 +45,7 @@ class RetinaSeg(nn.Module):
 		self.p3 = FPNBlock(out_channels,in_channels_list[0])
 
 		#self.ssh = SSH(out_channels, out_channels)
-		self.ssh = SSH(1024,512)
+		#self.ssh = SSH(1024,512)
 		#self.se1=SEModule(out_channels)
 		#self.se2=SEModule(out_channels)
 		#self.se3=SEModule(out_channels)
@@ -57,7 +57,7 @@ class RetinaSeg(nn.Module):
 		#)
 		self.jpu = JPU([256,256,256],out_channels)
 		
-		self.cls1 = nn.Conv2d(512, classes, kernel_size=1, stride=1, padding=0, bias=True)	
+		self.cls1 = nn.Conv2d(1024, classes, kernel_size=1, stride=1, padding=0, bias=True)	
 
 	def _make_seg_head(self,encoder,size=None,scale_factor=8,muti_head_up=False):
 		
@@ -90,7 +90,7 @@ class RetinaSeg(nn.Module):
 		#feature1 = self.se1(fpn[0])
 
 		# SSH
-		out = self.ssh(out)
+		#out = self.ssh(out)
 
 		# PSPHead
 		#psphead3 = self.psphaed(feature3)
