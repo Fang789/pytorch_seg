@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
-from . import functional as F
-#from torch.nn import functional as F
+from . import functional as Fu
+from torch.nn import functional as F
 
 class CrossEntropy(nn.Module):
 	def __init__(self, ignore_label=-1, weight=None):
@@ -54,15 +54,14 @@ class OhemCrossEntropy(nn.Module):
 
 class JaccardLoss(nn.Module):
 
-	def __init__(self, eps=1., activation=None, ignore_channels=None, **kwargs):
+	def __init__(self, eps=1., ignore_channels=None, **kwargs):
 		super().__init__(**kwargs)
 		self.eps = eps
-		self.activation = Activation(activation)
 		self.ignore_channels = ignore_channels
 
 	def forward(self, y_pr, y_gt):
-		y_pr = self.activation(y_pr)
-		return 1 - F.jaccard(
+		y_pr = F.softmax(y_pr, dim=1)
+		return 1 - Fu.jaccard(
 			y_pr, y_gt,
 			eps=self.eps,
 			threshold=None,
@@ -71,16 +70,15 @@ class JaccardLoss(nn.Module):
 
 class DiceLoss(nn.Module):
 
-	def __init__(self, eps=1., beta=1., activation=None, ignore_channels=None, **kwargs):
+	def __init__(self, eps=1., beta=1., ignore_channels=None, **kwargs):
 		super().__init__(**kwargs)
 		self.eps = eps
 		self.beta = beta
-		self.activation = Activation(activation)
 		self.ignore_channels = ignore_channels
 
 	def forward(self, y_pr, y_gt):
-		y_pr = self.activation(y_pr)
-		return 1 - F.f_score(
+		y_pr = F.softmax(y_pr, dim=1)
+		return 1 - Fu.f_score(
 			y_pr, y_gt,
 			beta=self.beta,
 			eps=self.eps,
@@ -90,15 +88,14 @@ class DiceLoss(nn.Module):
 
 class CategoricalCELoss(nn.Module):
 
-	def __init__(self, class_weights=None,activation=None,ignore_channels=None,**kwargs):
+	def __init__(self, class_weights=None,ignore_channels=None,**kwargs):
 		super().__init__(**kwargs)
 		self.class_weights = class_weights if class_weights is not None else 1
 		self.ignore_channels = ignore_channels
-		self.activation = Activation(activation)
 
 	def forward(self, y_pr, y_gt):
-		y_pr = self.activation(y_pr)
-		return F.categorical_crossentropy(
+		y_pr = F.softmax(y_pr, dim=1)
+		return Fu.categorical_crossentropy(
 			y_pr, y_gt,
 			class_weights=self.class_weights,
 			ignore_channels=self.ignore_channels,
@@ -118,7 +115,7 @@ class CategoricalFocalLoss(nn.Module):
 
 	def forward(self,y_pr, y_gt):
 		y_pr = self.activation(y_pr)
-		return F.categorical_focal_loss(
+		return Fu.categorical_focal_loss(
 			y_pr, y_gt,
 			alpha=self.alpha,
 			gamma=self.gamma,
