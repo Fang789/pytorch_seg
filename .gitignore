@@ -3,4 +3,5 @@
 *.png
 *.swp
 *.txt
+*.pyc
 visibel.py
