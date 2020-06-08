@@ -7,6 +7,7 @@ import numpy as np
 from model.efficientnet import EfficientNet2 
 from model.net import FPNBlock,PSPHead,Conv3x3GNReLU,SSH
 from model.jpu import JPU
+from model.aspp import ASPP
 
 class RetinaSeg(nn.Module):
 	def __init__(self,encoder_name,classes):
@@ -36,7 +37,8 @@ class RetinaSeg(nn.Module):
 		if encoder_name=='Resnet50' or encoder_name=='Resnest50':
 			in_channels_list = [512,1024,2048]
 		elif encoder_name=="efficient":
-			in_channels_list =[56,160,1792] #b4
+			#in_channels_list =[56,160,1792] #b4
+			in_channels_list =[192,320,1280] #b0
 
 		out_channels = 256
 
@@ -44,6 +46,13 @@ class RetinaSeg(nn.Module):
 		self.p4 = FPNBlock(out_channels,in_channels_list[1])
 		self.p3 = FPNBlock(out_channels,in_channels_list[0])
 
+		#self.aspp = nn.Sequential(
+		#	ASPP(out_channels,out_channels*2, atrous_rates=(6,12,18), separable=True),
+		#	#SeparableConv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+		#	nn.Conv2d(out_channels*2, out_channels*2, 3, padding=1, bias=False),
+		#	nn.BatchNorm2d(out_channels*2),
+		#	nn.ReLU(),
+		#)
 		#self.ssh = SSH(out_channels, out_channels)
 		#self.ssh = SSH(1024,512)
 		#self.se1=SEModule(out_channels)
@@ -90,10 +99,13 @@ class RetinaSeg(nn.Module):
 		#feature1 = self.se1(fpn[0])
 
 		# SSH
-		#out = self.ssh(out)
+		#out = self.ssh(p3)
 
 		# PSPHead
-		#psphead3 = self.psphaed(feature3)
+		#out = self.psphaed(p3)
+
+		# ASPP
+		#out=self.aspp(p3)
 
 		output = self._make_seg_head(out,size=inputs.shape[2:],muti_head_up=False) #解码直接上采样8倍
 
