@@ -15,11 +15,13 @@ if __name__ == "__main__":
 	model.eval()
 	x = torch.Tensor(1, 3, 360,480).cuda()
 	N = 101 #test pics numbers
-	result = []
 	with torch.no_grad():
+		torch.cuda.synchronize()
+		st = time.time()*1000
 		for _ in range(N):
-			st = time.time()
-			out = model(x)
-			result.append(time.time()-st)
-
-		print(N/sum(result))
+			pred = model(x)
+			out = pred.argmax(axis=0)
+			out = out.cpu().numpy()
+			torch.cuda.synchronize()
+		end=time.time()*1000
+		print(N*1000/(end-st))
