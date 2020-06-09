@@ -14,7 +14,7 @@ if __name__ == "__main__":
 	model.cuda()
 	model.eval()
 	x = torch.Tensor(1, 3, 360,480).cuda()
-	N = 101 #test pics numbers
+	N = 1000 #test pics numbers
 	with torch.no_grad():
 		torch.cuda.synchronize()
 		st = time.time()*1000
