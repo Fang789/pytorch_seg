@@ -1,12 +1,11 @@
 from model.retina import RetinaSeg
 import torch
 from ptflops import get_model_complexity_info
-#from torchstat import stat
 
 if __name__=="__main__":
 	n_classes=12
-	backbone="efficient"
-	model_path="./weights/camvid_best_model.pth"
+	backbone="Resnest50"
+	model_path="/home/fangqin/progect/pytorch_seg_z/weights/camvid_resnest_aspp_64.pth"
 
 	with torch.cuda.device(0):
 		net = RetinaSeg(backbone,classes=n_classes)
@@ -15,4 +14,4 @@ if __name__=="__main__":
 												print_per_layer_stat=True, verbose=True)
 		print('{:<30}  {:<8}'.format('Computational complexity: ', macs))
 		print('{:<30}  {:<8}'.format('Number of parameters: ', params))
-		#flops=2*macs
+		#FLOPs=2*MACs #1GFLOPs=10**9FLOPs
