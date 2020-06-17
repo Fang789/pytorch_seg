@@ -1,13 +1,14 @@
 import numpy as np
 
-def get_confusion_matrix(label, pred, num_class, ignore=-1):
+def get_confusion_matrix(label, pred, num_class, ignore=255):
 	"""
 	Calcute the confusion matrix by given label and pred
 	"""
 	output = pred.cpu().numpy().transpose(0, 2, 3, 1)
-	mask = label.cpu().numpy().transpose(0, 2, 3, 1)
+	#mask = label.cpu().numpy().transpose(0, 2, 3, 1)
 	seg_pred = np.asarray(np.argmax(output, axis=3), dtype=np.uint8)
-	seg_gt = np.asarray(np.argmax(mask, axis=3), dtype=np.int)
+	#seg_gt = np.asarray(np.argmax(mask, axis=3), dtype=np.int)
+	seg_gt = label.cpu().numpy()
 
 	ignore_index = seg_gt != ignore
 	seg_gt = seg_gt[ignore_index]
@@ -49,5 +50,5 @@ def get_data_class(data_name):
 				 'person','rider','car','truck','bus','train',
 				'motocycle','bicycle']
 
-	return CLASSES
+	return len(CLASSES)
 

@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.io as sio  
 from PIL import Image
+import torch
 import os
 
 label_color_city = [(128, 64, 128), (244, 35, 232), (70,70, 70)
@@ -21,7 +22,7 @@ label_color_city = [(128, 64, 128), (244, 35, 232), (70,70, 70)
 Sky = [128, 128, 128]
 Building = [128, 0, 0]
 Pole = [192, 192, 128]
-Road_marking = [255, 69, 0]
+#Road_marking = [255, 69, 0]
 Road = [128, 64, 128]
 Pavement = [60, 40, 222]
 Tree = [128, 128, 0]
@@ -69,7 +70,7 @@ def get_color_list(dataset):
         color_list = [list(label_color_city[i]) for i in range(20)]  
         color_list = np.array(color_list)
     elif dataset=="camvid":
-        color_list = np.array([Sky, Building, Pole, Road_marking, Road, Pavement, Tree, SignSymbol, Fence, Car, Pedestrian, Bicyclist, Unlabelled])
+        color_list = np.array([Sky, Building, Pole, Road, Pavement, Tree, SignSymbol, Fence, Car, Pedestrian, Bicyclist, Unlabelled])
     else : #VOC2012
         color_list=label_color_voc
     return color_list
@@ -105,3 +106,26 @@ def onehot_to_rgb(onehot,dataset):
     for k,color in enumerate(color_list):
         output[single_layer==k] = color
     return np.uint8(output)
+
+def get_class_weight(dataset):
+	if dataset == "city":
+		n_classes = len(label_color_city )
+		class_weights = torch.FloatTensor([2.8149201869965,6.9850029945374,3.7890393733978,
+											9.9428062438965,9.7702074050903,9.5110931396484,
+											10.311357498169,10.026463508606,4.6323022842407,
+											9.5608062744141,7.8698215484619,9.5168733596802,
+											10.373730659485,6.6616044044495,10.260489463806,
+											10.287888526917,10.289801597595,10.405355453491,
+											10.138095855713,0.0
+											]).cuda()
+		return class_weights
+	elif dataset=="camvid":
+		class_weights = torch.FloatTensor([0.2595,0.1826,4.5640,0.9051, #0.1417
+											0.3826,9.6446,1.8418,0.6823,6.2478,
+											7.3614,1.0974,0.0]).cuda()
+
+		return class_weights
+
+
+		
+	
