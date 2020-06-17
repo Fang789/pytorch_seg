@@ -13,6 +13,7 @@ from loss.losses import CategoricalFocalLoss
 from torch.nn import functional as F
 import cv2
 import argparse
+from apex.parallel import convert_syncbn_model
 
 def inference(model, image,flip=False):
 	size = image.size()
@@ -108,24 +109,29 @@ def multi_scale_test(model,image,base_size,num_classes,scales=[1],flip=False):
 
 def test(args):
 
-	CLASSES = get_data_class(args.data_name)
-	n_classes = 1 if len(CLASSES) == 1 else (len(CLASSES) + 1)  
-	ms = True
+	classes = get_data_class(args.data_name)
+	n_classes = 1 if classes == 1 else (classes + 1)  
+	ms = False
 
 	# load best saved checkpoint
-	model = RetinaSeg(args.backbone,classes=n_classes)
-	model.load_state_dict(torch.load(args.model_path) )
+	if args.train_style =="distribute":
+		checkpoint = torch.load(args.model_path)
+		model = convert_syncbn_model(RetinaSeg(args.backbone,classes=n_classes))
+		model.load_state_dict(checkpoint['model'])
+	else:
+		model = RetinaSeg(args.backbone,classes=n_classes)
+		model.load_state_dict(torch.load(args.model_path) )
 	model = model.cuda()
 	model.eval()
 
 	# create test dataset
 	test_dataset = Dataset(
 			args.test_txt, 
-			classes = CLASSES, 
+			n_classes = classes, 
 			height = args.height,
 			width = args.width,
-			resize = False,
-			augmentation = None,#get_validation_augmentation(height,width),
+			resize = True,
+			augmentation = False,
 	)
 	test_dataloader = DataLoader(test_dataset,batch_size=1,shuffle=False)
 
@@ -158,6 +164,7 @@ if __name__ == '__main__':
 	parser.add_argument('--base_size', type=int, default=480,help="img max edge")
 	parser.add_argument('--test_txt', type=str, default='./txt/camvid_val.txt')
 	parser.add_argument('--model_path', type=str, default='./weights/camvid_best_model.pth')
+	parser.add_argument('--train_style', type=str, default='distribute')
 	parser.add_argument('--data_name', type=str, default='camvid',
 						help='Dataset to use',
 						choices=['ade20k','city','voc','camvid'])
