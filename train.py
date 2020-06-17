@@ -34,12 +34,23 @@ def train(args):
 
 	# create segmentation model with pretrained encoder
 	model = RetinaSeg(args.backbone,classes=n_classes)
-	model.train()
+	optimizer = AdamW([dict(params=model.parameters(), lr=args.lr)])
 
 	if num_gpus>1:
 		parallel_model = nn.DataParallel(model).cuda()
 	else:
 		parallel_model = model.cuda()
+
+	if args.resume_path is not None:
+		checkpoint = torch.load(args.resume_path)
+		model.load_state_dict(checkpoint['model'])
+		optimizer.load_state_dict(checkpoint['optimizer'])
+		start_epoch = checkpoint['epoch']
+		print("recover model from {}".format(args.resume_path))
+	else:
+		start_epoch = 1
+
+	#model.train()
 
 	height,width=args.input_height,args.input_width
 
@@ -67,7 +78,6 @@ def train(args):
 
 	class_weight = get_class_weight(args.data_name)
 	criterion = CrossEntropy(weight=class_weight).cuda()#weight=class_weigh
-	optimizer = Adam([dict(params=model.parameters(), lr=args.lr)])
 	#lambda1 = lambda epoch: pow((1-((epoch-1)/args.epochs)),0.9)
 	#scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
 
@@ -75,7 +85,7 @@ def train(args):
 	best_mIoU = 0
 	weight_save_path=os.path.join(args.weights,args.data_name+"_best_model.pth")
 
-	for epoch in range(1, args.epochs+1):
+	for epoch in range(start_epoch, args.epochs+1):
 		model.train()
 		print('\nEpoch: {}'.format(epoch))	
 		pbar = tqdm(train_loader,ncols=60)
@@ -97,9 +107,19 @@ def train(args):
 		if mean_IoU > best_mIoU:
 			best_mIoU = mean_IoU
 			if isinstance(parallel_model,nn.DataParallel):
-				torch.save(parallel_model.module.state_dict(),weight_save_path)
+				checkpoint = {
+					'epoch':epoch,
+					'model':parallel_model.module.state_dict(),
+					'optimizer': optimizer.state_dict(),
+				}
+				torch.save(checkpoint,weight_save_path)
 			else:
-				torch.save(parallel_model.state_dict(), weight_save_path)
+				checkpoint = {
+					'epoch':epoch,
+					'model':parallel_model.state_dict(),
+					'optimizer': optimizer.state_dict(),
+				}
+				torch.save(checkpoint, weight_save_path)
 		msg = 'Loss: {:.3f}, MeanIU: {: 4.4f}, Best_mIoU: {: 4.4f}'.format(
 					valid_loss, mean_IoU, best_mIoU)
 		print(msg)
@@ -143,6 +163,7 @@ if __name__ == '__main__':
 	parser.add_argument('--batch_size', type=int, default=4, help='single gpu batch_size')
 	parser.add_argument('--datadir', type=str, default='./txt/')
 	parser.add_argument('--weights', type=str, default='./weights/')
+	parser.add_argument('--resume_path', type=str, default=None)
 	parser.add_argument('--lr', type=float, default=1e-3)
 	parser.add_argument('--data_name', type=str, default='city',
 						help='Dataset to use',
