@@ -7,14 +7,16 @@ from tqdm import tqdm
 from data.data_loader import Dataset
 from model.retina import RetinaSeg
 from data.augment import get_validation_augmentation,get_training_augmentation
-from utils.label_color import read_labelcolors
+from utils.label_color import read_labelcolors,get_class_weight
 from utils.helper import get_confusion_matrix,get_data_class
-from loss.losses import CategoricalFocalLoss
+from loss.losses import CrossEntropy,Lovasz_Softmax
+from torch.optim import lr_scheduler,Adam,AdamW
 import cv2
 import argparse
+#torch.backends.cudnn.deterministic = True
+
 
 def train(args):
-
 	if torch.cuda.is_available():
 		num_gpus = torch.cuda.device_count()
 		torch.cuda.manual_seed(123)
@@ -27,9 +29,8 @@ def train(args):
 	else:
 		val_txt=os.path.join(args.datadir,'city_val.txt') 
 
-	CLASSES	= get_data_class(args.data_name)
-	n_classes = 1 if len(CLASSES) == 1 else (len(CLASSES) + 1)  
-	activation = 'sigmoid' if n_classes == 1 else 'softmax'
+	classes	= get_data_class(args.data_name)
+	n_classes = 1 if classes == 1 else classes+1
 
 	# create segmentation model with pretrained encoder
 	model = RetinaSeg(args.backbone,classes=n_classes)
@@ -40,32 +41,35 @@ def train(args):
 	else:
 		parallel_model = model.cuda()
 
-
 	height,width=args.input_height,args.input_width
 
 	# Dataset for train images
 	train_dataset = Dataset(
 		train_txt, 
-		classes=CLASSES, 
+		n_classes=classes, 
 		height=height,
 		width=width,
-		augmentation=get_training_augmentation(height,width),
+		augmentation=True,
 	)
 
 	# Dataset for validation images
 	valid_dataset = Dataset(
 		val_txt, 
-		classes=CLASSES, 
+		n_classes=classes, 
 		height=height,
 		width=width,
-		augmentation=get_validation_augmentation(height,width),
+		resize =True,
+		augmentation=False,
 	)
 
-	train_loader = DataLoader(train_dataset, batch_size=args.batch_size*num_gpus, shuffle=True,num_workers=8,drop_last=True)
-	valid_loader = DataLoader(valid_dataset, batch_size=1,shuffle=False,num_workers=4)
+	train_loader = DataLoader(train_dataset, batch_size=args.batch_size*num_gpus, shuffle=True,num_workers=8,drop_last=True,pin_memory=True)#
+	valid_loader = DataLoader(valid_dataset, batch_size=1,shuffle=False,num_workers=4,pin_memory=True)#
 
-	criterion = CategoricalFocalLoss(activation=activation)
-	optimizer = torch.optim.Adam([dict(params=parallel_model.parameters(), lr=args.lr)])
+	class_weight = get_class_weight(args.data_name)
+	criterion = CrossEntropy(weight=class_weight).cuda()#weight=class_weigh
+	optimizer = Adam([dict(params=model.parameters(), lr=args.lr)])
+	#lambda1 = lambda epoch: pow((1-((epoch-1)/args.epochs)),0.9)
+	#scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
 
 	# train model
 	best_mIoU = 0
@@ -77,8 +81,8 @@ def train(args):
 		pbar = tqdm(train_loader,ncols=60)
 		for batch in pbar:
 			image,mask = batch
-			image = image.cuda()
-			mask = mask.cuda()
+			image = image.cuda(non_blocking=True)
+			mask = mask.cuda(non_blocking=True)
 
 			optimizer.zero_grad()
 			prediction = parallel_model.forward(image)
@@ -87,8 +91,8 @@ def train(args):
 			optimizer.step()
 			
 			pbar.set_postfix(loss=loss.item())
-			#print("loss:{:.5f}".format(loss.item()),flush=True,end='\r')#loss.cpu().detach().numpy()
 
+		#scheduler.step()	
 		valid_loss, mean_IoU, IoU_array =valid(valid_loader,parallel_model,n_classes,criterion)
 		if mean_IoU > best_mIoU:
 			best_mIoU = mean_IoU
@@ -113,8 +117,8 @@ def valid(valid_loader,model,n_classes,criterion):
 	with torch.no_grad():
 		for batch in valid_loader:
 			image,mask=batch
-			image = image.cuda()
-			mask = mask.cuda()
+			image = image.cuda(non_blocking=True)
+			mask = mask.cuda(non_blocking=True)
 
 			pred = model.forward(image)
 			loss = criterion(pred,mask)
@@ -135,13 +139,12 @@ if __name__ == '__main__':
 	parser.add_argument('--backbone', type=str,default='efficient')
 	parser.add_argument('--input_height', type=int, default=360)
 	parser.add_argument('--input_width', type=int, default=480)
-	parser.add_argument('--classes', type=int, default=2)
-	parser.add_argument('--epochs', type=int, default=100)
+	parser.add_argument('--epochs', type=int, default=50)
 	parser.add_argument('--batch_size', type=int, default=4, help='single gpu batch_size')
 	parser.add_argument('--datadir', type=str, default='./txt/')
 	parser.add_argument('--weights', type=str, default='./weights/')
 	parser.add_argument('--lr', type=float, default=1e-3)
-	parser.add_argument('--data_name', type=str, default='camvid',
+	parser.add_argument('--data_name', type=str, default='city',
 						help='Dataset to use',
 						choices=['ade20k','city','voc','camvid','city_split','camvid_ac'])
 	parser.add_argument('--gpu_id', type=str, default='0,1')
