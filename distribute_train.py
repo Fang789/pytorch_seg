@@ -55,7 +55,10 @@ def train(args):
 		model.load_state_dict(checkpoint['model'])
 		optimizer.load_state_dict(checkpoint['optimizer'])
 		amp.load_state_dict(checkpoint['amp'])	
+		start_epoch = checkpoint['epoch']
 		print("recover model from {}".format(args.resume_path))
+	else:
+		start_epoch = 1
 	
 	parallel_model = DistributedDataParallel(model,delay_allreduce=True)
 
@@ -95,7 +98,7 @@ def train(args):
 	best_mIoU = 0
 	weight_save_path=os.path.join(args.weights,args.data_name+"_best_model_dist.pth")
 
-	for epoch in range(1, args.epochs+1):
+	for epoch in range(start_epoch, args.epochs+1):
 		model.train()
 		print('\nEpoch: {}'.format(epoch))	
 		pbar = tqdm(train_loader,ncols=60)
@@ -118,6 +121,7 @@ def train(args):
 			best_mIoU = mean_IoU
 			if args.local_rank == 0:
 				checkpoint = {
+					'epoch':epoch,
 					'model':parallel_model.module.state_dict(),
 					'optimizer': optimizer.state_dict(),
 					'amp': amp.state_dict()
