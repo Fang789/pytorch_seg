@@ -39,14 +39,14 @@ def visible(args):
 
 	classes = get_data_class(args.data_name)
 	n_classes = 1 if classes ==1 else classes+1
+	checkpoint = torch.load(args.model_path)
 	# load best saved checkpoint
 	if args.train_style =="distribute":
-		checkpoint = torch.load(args.model_path)
 		model = convert_syncbn_model(RetinaSeg(args.backbone,classes=n_classes))
-		model.load_state_dict(checkpoint['model'])
 	else:
 		model = RetinaSeg(args.backbone,classes=n_classes)
-		model.load_state_dict(torch.load(args.model_path) )
+
+	model.load_state_dict(checkpoint['model'])
 
 	model = model.cuda()
 	model.eval()
@@ -93,10 +93,10 @@ if __name__ == '__main__':
 	parser.add_argument('--backbone', type=str,default='efficient')
 	parser.add_argument('--height', type=int, default=512)
 	parser.add_argument('--width', type=int, default=1024)
-	parser.add_argument('--test_txt', type=str, default='./txt/camvid_val.txt')
-	parser.add_argument('--model_path', type=str, default='./weights/camvid_best_model.pth')
+	parser.add_argument('--test_txt', type=str, default='./txt/city_val.txt')
+	parser.add_argument('--model_path', type=str, default='./weights/city_best_model_dist.pth')
 	parser.add_argument('--train_style', type=str, default='distribute')
-	parser.add_argument('--data_name', type=str, default='camvid',
+	parser.add_argument('--data_name', type=str, default='city',
 						help='Dataset to use',
 						choices=['ade20k','city','voc','camvid'])
 	parser.add_argument('--gpu_id', type=str, default='1')
