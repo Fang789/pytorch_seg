@@ -1,87 +1,94 @@
 import os
 import numpy as np
-import cv2
+from PIL import Image,ImageOps, ImageFilter
+import torch
 from torch.utils.data import Dataset as BaseDataset
+from torchvision import transforms
+import random
 
 # classes for data loading and preprocessing
 class Dataset(BaseDataset):
-	"""
-	Args:
-		images_dir (str): path to images folder
-		masks_dir (str): path to segmentation masks folder
-		class_values (list): values of classes to extract from segmentation mask
-		augmentation (albumentations.Compose): data transfromation pipeline 
-			(e.g. flip, scale, etc.)
-		preprocessing (albumentations.Compose): data preprocessing 
-			(e.g. noralization, shape manipulation, etc.)
-
-	"""
     
 	def __init__(
 			self,
 			txt_dir,
-			classes=None,
+			n_classes=None,
 			height=384,
 			width=480,
-			resize=True,
-			augmentation=None,
-			mean=[0.485, 0.456, 0.406],
-			std=[0.229, 0.224, 0.225]):
+			ignore_label=-1,
+			augmentation=False,
+			preprocessing=True,
+			val_data = False,
+			):
 
-		self.width=width
-		self.height=height
+		self.width = width
+		self.height = height
+		self.txt_dir = txt_dir
+		self.val_data = val_data
 		self.img_filename_list,self.label_filename_list=self.get_filename_list(txt_dir) 
-		# convert str names to class values on masks
-		self.class_values = [classes.index(cls.lower()) for cls in classes]
-		self.mean = mean
-		self.std = std	
+		self.normalize = transforms.Normalize(
+				mean=[0.485, 0.456, 0.406],
+				std=[0.229, 0.224, 0.225])
 		self.augmentation = augmentation
-		self.resize = resize
+		self.preprocessing = preprocessing
+		self.crop_size = (height,width)
+		self.base_size = 512
+		if n_classes == 11:
+			self.label_mapping = {k:k for k in range(n_classes)}
+		elif n_classes ==19:
+			self.label_mapping = {-1: ignore_label, 0: ignore_label, 
+							  1: ignore_label, 2: ignore_label, 
+							  3: ignore_label, 4: ignore_label, 
+							  5: ignore_label, 6: ignore_label, 
+							  7: 0, 8: 1, 9: ignore_label, 
+							  10: ignore_label, 11: 2, 12: 3, 
+							  13: 4, 14: ignore_label, 15: ignore_label, 
+							  16: ignore_label, 17: 5, 18: ignore_label, 
+							  19: 6, 20: 7, 21: 8, 22: 9, 23: 10, 24: 11,
+							  25: 12, 26: 13, 27: 14, 28: 15, 
+							  29: ignore_label, 30: ignore_label, 
+							  31: 16, 32: 17, 33: 18}
 
 	def __getitem__(self, i):
 		
 		# read data
-		image = cv2.imread(self.img_filename_list[i])
-		image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-		mask = cv2.imread(self.label_filename_list[i],0)
+		image = Image.open(self.img_filename_list[i]).convert('RGB')
+		if 'city_test' in self.txt_dir:
+			mask = Image.open(self.label_filename_list[i]).convert('L')
+		else:
+			mask = Image.open(self.label_filename_list[i])
+		assert(mask.mode == "L")
 
-		if self.resize:
-			image = cv2.resize(image,(self.width,self.height))        
-			mask = cv2.resize(mask, (self.width, self.height), interpolation=cv2.INTER_NEAREST)
-		
-		# extract certain classes from mask (e.g. cars)
-		masks = [(mask == v) for v in self.class_values]
-		mask = np.stack(masks, axis=-1).astype('float')
-		
-		# add background if mask is not binary
-		if mask.shape[-1] != 1:
-			background = 1 - mask.sum(axis=-1, keepdims=True)
-			mask = np.concatenate((mask, background), axis=-1)
-		
-		# apply augmentations
+		if self.val_data:
+			image,mask = self.val_crop(image,mask)
+
+		# apply augmentations for train dataset
 		if self.augmentation:
-			sample = self.augmentation(self.height,self.width)(image=image, mask=mask)
-			image, mask = sample['image'], sample['mask']
+			image,mask = self.augement(image,mask)
 		
 		# apply preprocessing
-		image = self.input_transform(image)
-		mask= self.label_transform(mask)
+		if self.preprocessing:
+			image = self.input_transform(image)
+			mask= self.label_transform(mask)
 			
 		return image, mask
 		
 	def __len__(self):
 		return len(self.img_filename_list)
 
-	def input_transform(self, image):
-		image = image.astype(np.float32)
-		image = image / 255.0
-		image -= self.mean
-		image /= self.std
+	def input_transform(self,image):
+		image = np.float32(np.array(image)) / 255.
 		image = image.transpose((2, 0, 1))
+		image = self.normalize(torch.from_numpy(image.copy()))
 		return image	
 
-	def label_transform(self, label):
-		return label.transpose(2, 0, 1).astype('float32')
+	def label_transform(self,mask):
+		mask = np.array(mask)
+		mask_copy = mask.copy()
+		for k, v in self.label_mapping.items():
+			mask_copy[mask == k] = v
+		mask = Image.fromarray(mask_copy.astype(np.uint8))	
+		return torch.from_numpy(np.array(mask)).long() 
 
 	def get_filename_list(self,txt_dir):
 		f=open(txt_dir,'r')
@@ -96,4 +103,71 @@ class Dataset(BaseDataset):
 				print('Check that the path is correct.')
 
 		return img_filename_list, label_filename_list
-    
+
+	def augement(self,img,mask):
+		# random mirror
+		crop_size = self.crop_size
+		if random.random() < 0.5:
+			img = img.transpose(Image.FLIP_LEFT_RIGHT)
+			mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+		# random scale (short edge from 480 to 720)
+		short_size = random.randint(int(self.base_size*0.5), int(self.base_size*2.0))
+		w, h = img.size
+		if h > w:
+			ow = short_size
+			oh = int(1.0 * h * ow / w)
+		else:
+			oh = short_size
+			ow = int(1.0 * w * oh / h)
+		img = img.resize((ow, oh), Image.BILINEAR)
+		mask = mask.resize((ow, oh), Image.NEAREST)
+		# random rotate -10~10, mask using NN rotate
+		deg = random.uniform(-10, 10)
+		img = img.rotate(deg, resample=Image.BILINEAR)
+		mask = mask.rotate(deg, resample=Image.NEAREST)
+		# pad crop
+		if short_size < min(crop_size):
+			padh = crop_size[0] - oh if oh < crop_size[0] else 0
+			padw = crop_size[1] - ow if ow < crop_size[1] else 0
+			img = ImageOps.expand(img, border=(0, 0, padw, padh), fill=0)
+			mask = ImageOps.expand(mask, border=(0, 0, padw, padh), fill=0)
+		# random crop crop_size
+		w, h = img.size
+		x1 = random.randint(0, w - crop_size[1])
+		y1 = random.randint(0, h - crop_size[0])
+		img = img.crop((x1, y1, x1+crop_size[1], y1+crop_size[0]))
+		mask = mask.crop((x1, y1, x1+crop_size[1], y1+crop_size[0]))
+		# gaussian blur as in PSP
+		if random.random() < 0.5:
+			img = img.filter(ImageFilter.GaussianBlur(
+				radius = random.random()))
+
+		return img,mask
+
+	def val_crop(self,img,mask):
+		outsize = self.crop_size
+		short_size = outsize[0]
+		w, h = img.size
+		if w > h:
+			oh = short_size
+			ow = int(1.0 * w * oh / h)
+		else:
+			ow = short_size
+			oh = int(1.0 * h * ow / w)
+		img = img.resize((ow, oh), Image.BILINEAR)
+		mask = mask.resize((ow, oh), Image.NEAREST)
+		# center crop
+		w, h = img.size
+		x1 = int(round((w - outsize[1]) / 2.))
+		y1 = int(round((h - outsize[0]) / 2.))
+		img = img.crop((x1, y1, x1+outsize[1], y1+outsize[0]))
+		mask = mask.crop((x1, y1, x1+outsize[1],y1+outsize[0]))
+
+		return img,mask	
+   
+if __name__=="__main__":
+	
+	train_txt="../txt/city_split_train.txt"
+	height,width = 512,1024
+	train_dataset = Dataset(train_txt,height=height,width=width,n_classes=19,augmentation=True)
+	print(train_dataset[0])
