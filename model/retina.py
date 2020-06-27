@@ -5,18 +5,19 @@ import torchvision.models._utils as _utils
 import torch.nn.functional as F
 import numpy as np
 from model.efficientnet import EfficientNet2 
-from model.net import FPNBlock,PSPHead,Conv3x3GNReLU,SSH,SpatialAttention
-from model.jpu import JPU, SeparableConv2d
+from model.net import FPNBlock,PSPHead,Conv3x3GNReLU,SSH
+from model.jpu import JPU,SeparableConv2d
 from model.aspp import ASPP
 
 class RetinaSeg(nn.Module):
-	def __init__(self,encoder_name,classes):
+	def __init__(self,encoder_name,classes,aux=False):
 		"""
 		encoder_name: backbone name
 		classes: network classes
 		"""
 		super(RetinaSeg,self).__init__()
 		
+		self.aux = aux
 		backbone=None
 		if encoder_name == 'Resnet50':
 			import torchvision.models as models
@@ -38,6 +39,7 @@ class RetinaSeg(nn.Module):
 			in_channels_list = [512,1024,2048]
 		elif encoder_name=="efficient":
 			#in_channels_list =[56,160,1792] #b4
+			#in_channels_list =[40,112,1280] #b0
 			in_channels_list =[24,40,112,1280] #b0
 
 		out_channels = 256
@@ -51,7 +53,6 @@ class RetinaSeg(nn.Module):
 		self.p3_up = FPNBlock(out_channels,in_channels_list[0])
 
 		self.cbr = Conv3x3GNReLU(out_channels,out_channels,upsample=True)
-		#self.split_dilated = Split_DilatedConv(out_channels*2,out_channels)
 		norm_layer=nn.BatchNorm2d
 
 		self.dilation1 = nn.Sequential(SeparableConv2d(out_channels*2,out_channels, kernel_size=3, padding=1, dilation=1, bias=False),
@@ -66,31 +67,30 @@ class RetinaSeg(nn.Module):
 										norm_layer(out_channels),
 										nn.ReLU(inplace=True))
 
-		#self.dilation4 = nn.Sequential(SeparableConv2d(2*out_channels,out_channels, kernel_size=3, padding=8, dilation=8, bias=False),
-		#									norm_layer(out_channels),
-		#									nn.ReLU(inplace=True))
-
+		if self.aux is not None:
+			self.auxlayer = nn.Sequential(
+				nn.Conv2d(in_channels_list[0],128, 3, padding=1, bias=False),
+				nn.BatchNorm2d(128),
+				nn.ReLU(True),
+				nn.Dropout(0.1),
+				nn.Conv2d(128,classes, 1)
+			)
 		#self.aspp = nn.Sequential(
 		#	ASPP(out_channels,out_channels*2, atrous_rates=(6,12,18), separable=True),
-		#	#SeparableConv2d(out_channels, out_channels, kernel_size=3, padding=1, bias=False),
+		#	#SeparableConv2d(out_channels*2, out_channels*2, kernel_size=3, padding=1, bias=False),
 		#	nn.Conv2d(out_channels*2, out_channels*2, 3, padding=1, bias=False),
 		#	nn.BatchNorm2d(out_channels*2),
 		#	nn.ReLU(),
 		#)
 		#self.ssh = SSH(out_channels, out_channels)
-		#self.ssh = SSH(out_channels*2,out_channels*2)
-		#self.se1=SEModule(out_channels)
-		#self.se2=SEModule(out_channels)
-		#self.se3=SEModule(out_channels)
 		#self.psphaed = PSPHead(
-		#	in_channels=out_channels*2,
+		#	in_channels=out_channels,
 		#	use_batchnorm=True,
 		#	out_channels=out_channels*2,
 		#	dropout=None,
 		#)
 		#self.jpu = JPU([256,256,256],out_channels)
-			
-		#self.dropout = nn.Dropout2d(p=0.2)
+		
 		self.cls1 = nn.Conv2d(768,classes, kernel_size=1, stride=1, padding=0, bias=True)	
 
 	def _make_seg_head(self,encoder,size=None,scale_factor=4,muti_head_up=False):
@@ -104,40 +104,31 @@ class RetinaSeg(nn.Module):
 			x = torch.cat([x1, x2, x3], 1)
 			x = self.cls2(x)
 		else:
-			x = F.interpolate(encoder,scale_factor=scale_factor, mode="bilinear", align_corners=True)
-			x = self.cls1(x)
+			x = self.cls1(encoder)
+			x = F.interpolate(x,scale_factor=scale_factor, mode="bilinear", align_corners=True)
 
 		return x
 
 	def forward(self,inputs):
-
 		out= self.body(inputs)
+		ph1 = out[0]
 		
 		# FPN
 		p5 = self.p5(out[3]) 
 		p4 = self.p4(p5, out[2])
 		p3 = self.p3(p4, out[1])
 
-		p5_cat = self.p5_up(p5,out[2])
+		p5_cat = self.p5_up(p5,out[2]) 
 		p4_cat = self.p4_up(p4,out[1])
 		p3_cat = self.p3_up(p3,out[0])
 
-		#p5_2 = self.p5_2(p5_cat) 
-		#p4_2 = self.p4_2(p5_2, p4_cat)
-		#p3_2 = self.p3_2(p4_2, p3_cat)
-
-
-		#p3_cat = self.cbr(p3_cat)
-		p3_2 = self.cbr(p3,p3_cat)
-		#p3 = self.cbr(p3_cat)
+		p3 = self.cbr(p3,p3_cat)
+		#feat = self.cbr(p2)
 
 		#test
-		feat = torch.cat((p3_cat,p3_2),dim=1)
-		#out = self.ssh(feat)
+		feat = torch.cat([p3,p3_cat],dim=1)
 		#out = torch.cat([self.dilation1(feat), self.dilation2(feat), self.dilation3(feat), self.dilation4(feat)], dim=1)
 		out = torch.cat([self.dilation1(feat), self.dilation2(feat), self.dilation3(feat)], dim=1)
-		#out = self.dropout(out)
-		#out = self.sa(out)*out
 
 		#JPU
 		#out = self.jpu([p3,p4,p5])
@@ -150,8 +141,18 @@ class RetinaSeg(nn.Module):
 
 		# PSPHead
 		#out = self.psphaed(p3)
+
 		# ASPP
 		#out=self.aspp(p3)
-		output = self._make_seg_head(out,size=inputs.shape[2:],muti_head_up=False) 
 
-		return output
+		output = self._make_seg_head(out,size=inputs.shape[2:],muti_head_up=False) 
+		if self.aux:
+			tmp=[output]
+			auxout = self.auxlayer(ph1)
+			auxout = F.interpolate(auxout,inputs.shape[2:], mode='bilinear', align_corners=True)
+			tmp.append(auxout)
+			return tmp
+		else:
+			return output
+
+		#return output
