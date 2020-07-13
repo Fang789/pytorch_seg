@@ -3,9 +3,9 @@ from PIL import Image
 
 def crop_img(image,img_name,im_type="img",split_num=2):
 	if im_type=="img":
-		save_path="/mnt/city/split_train_img/"
+		save_path = img_split_path
 	else:
-		save_path="/mnt/city/split_train_anno/"
+		save_path = anno_split_path
 	w,h = image.size  
 	if split_num==4:
 		box1 = (0,0,w//2,h//2) #左上角建系，需要给出对角的两个点的坐标 
@@ -28,7 +28,7 @@ def crop_img(image,img_name,im_type="img",split_num=2):
 def get_txt(img_folder,anno_folder):
 	img_list=sorted(os.listdir(img_folder))
 	anno_list=sorted(os.listdir(anno_folder))
-	with open("/home/fangqin/progect/segmentation_models.pytorch/txt/city_split_train.txt","w") as fw:
+	with open(split_save_txt,"w") as fw:
 		for img_name,anno_name in zip(img_list,anno_list):
 			img_path=os.path.join(img_folder,img_name)
 			anno_path=os.path.join(anno_folder,anno_name)
@@ -37,7 +37,16 @@ def get_txt(img_folder,anno_folder):
 	print("txt gene done!")
 
 if __name__=="__main__":
-	with open("../txt/city_train.txt","r") as f:
+	split_data_txt = "../txt/camvid_ac_train.txt"
+	split_save_txt = "../txt/camvid_split_train.txt"
+	img_split_path = "/mnt/camvid_split/split_train_img/"
+	anno_split_path = "/mnt/camvid_split/split_train_anno/" 
+	if not os.path.exists(img_split_path):
+		os.makedirs(img_split_path)
+	if not os.path.exists(anno_split_path):
+		os.makedirs(anno_split_path)
+
+	with open(split_data_txt,"r") as f:
 		lines = [line.strip().split(" ") for line in f]
 		img_path_list=[lines[i][0] for i in range(len(lines))]
 		label_path_list=[lines[i][1] for i in range(len(lines))]
@@ -49,4 +58,4 @@ if __name__=="__main__":
 		crop_img(image,img_path.split("/")[-1])
 		label= Image.open(label_path) 
 		crop_img(label,label_path.split("/")[-1],im_type="anno")
-	get_txt("/mnt/city/split_train_img/","/mnt/city/split_train_anno/" )
+	get_txt(img_split_path,anno_split_path)

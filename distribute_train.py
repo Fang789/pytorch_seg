@@ -21,6 +21,9 @@ from apex.parallel import convert_syncbn_model
 from apex.parallel import DistributedDataParallel
 from torch.utils.data.distributed import DistributedSampler
 
+from tensorboardX import SummaryWriter
+writer = SummaryWriter(log_dir='./log')
+
 #from model.lednet import LEDNet
 #from model.fastscnn import  FastSCNN
 
@@ -33,7 +36,8 @@ def train(args):
 
 	if torch.cuda.is_available():
 		num_gpus = torch.cuda.device_count()
-		torch.cuda.manual_seed(123)
+		#torch.cuda.manual_seed(123)
+		torch.cuda.manual_seed_all(123)
 	else:
 		torch.manual_seed(123)
 
@@ -52,9 +56,7 @@ def train(args):
 	dist.init_process_group(backend='nccl',init_method="env://")#world_size=2,rank=args.local_rank,world_size=2,rank=0
 
 	# create segmentation model with pretrained encoder
-	model = convert_syncbn_model(RetinaSeg(args.backbone,classes=n_classes,aux=True)).cuda() #RetinaSeg
-	#model = convert_syncbn_model(LEDNet(n_classes)).cuda() #RetinaSeg
-	#model = convert_syncbn_model(FastSCNN(numClasses = n_classes,aux=True)).cuda() #RetinaSeg
+	model = convert_syncbn_model(RetinaSeg(args.backbone,classes=n_classes,aux=False)).cuda() #RetinaSeg
 	optimizer = AdamW([dict(params=model.parameters(), lr=args.lr*num_gpus)])
 	model, optimizer = amp.initialize(model, optimizer, opt_level='O0') #O1表示混合精度
 	if args.resume_path is not None:
@@ -73,7 +75,6 @@ def train(args):
 	criterion = CrossEntropy(weight=class_weight).cuda()#weight=class_weight
 
 	height,width=args.input_height,args.input_width
-
 	# Dataset for train images
 	train_dataset = Dataset(
 		train_txt, 
@@ -100,12 +101,13 @@ def train(args):
 	
 	per_iter = len(train_dataset)//(num_gpus * args.batch_size)
 	max_iter = args.epochs * per_iter
-	scheduler = WarmupPolyLR(optimizer, T_max=max_iter, warmup_factor=1.0/3,warmup_iters=max_iter//12,power=0.9)
-	#scheduler = lr_scheduler.MultiStepLR(optimizer, [90,150,190,220], 0.2) 
-	#scheduler = lr_scheduler.ReduceLROnPlateau(optimizer,mode= 'min',factor=0.1, patience=10, verbose=False)
+	scheduler = WarmupPolyLR(optimizer, T_max=max_iter, warmup_factor=1.0/3,warmup_iters=200,power=0.9)
+	#scheduler = lr_scheduler.MultiStepLR(optimizer, [90,150,200,260,300], 0.5) 
+	#scheduler = lr_scheduler.ReduceLROnPlateau(optimizer,mode= 'min',factor=0.5, patience=3, verbose=True)
 
 	# train model
 	best_mIoU = 0
+	iteration = 0
 	weight_save_path=os.path.join(args.weights,args.data_name+"_best_model_dist.pth")
 
 	for epoch in range(start_epoch, args.epochs+1):
@@ -114,16 +116,27 @@ def train(args):
 		print('\nEpoch: {}'.format(epoch))	
 		pbar = tqdm(train_loader,ncols=60)
 		for batch in pbar:
+			iteration+=1
 			image,mask = batch
 			image = image.cuda(non_blocking=True)
 			mask = mask.cuda(non_blocking=True)
 
 			optimizer.zero_grad()
 			prediction = parallel_model.forward(image)
-			#loss = criterion(prediction, mask)
-			mainloss = criterion(prediction[0], mask)
-			auxloss = criterion(prediction[1], mask)
-			loss = 0.4*auxloss + mainloss
+			if isinstance(prediction,list):
+				mainloss = criterion(prediction[0], mask)
+				auxloss = sum([criterion(prediction[i], mask)*j for i,j in zip(range(1,4),[0.3,0.3,0.4])])
+				loss = auxloss + mainloss
+
+				writer.add_scalar('main losses:',mainloss.item(),iteration)
+				writer.add_scalar('auxloss losses:',auxloss.item(),iteration)
+			else:
+				loss = criterion(prediction, mask)
+			writer.add_scalar('train losses:',loss.item(),iteration)
+			#mainloss = criterion(prediction[0], mask)
+			#auxloss = criterion(prediction[1], mask)
+			#loss = 0.4*auxloss + mainloss
+
 			epoch_loss.append(loss.item())
 
 			with amp.scale_loss(loss, optimizer) as scaled_loss:				
@@ -133,7 +146,8 @@ def train(args):
 			pbar.set_postfix(loss=sum(epoch_loss) / len(epoch_loss)) #update loss every epoch
 
 		valid_loss, mean_IoU, IoU_array =valid(valid_loader,parallel_model,n_classes,criterion)
-		#scheduler.step(valid_loss)	
+		writer.add_scalar('valid losses:',valid_loss,epoch)
+		#scheduler.step()	
 		if mean_IoU > best_mIoU:
 			best_mIoU = mean_IoU
 			if args.local_rank == 0:
@@ -150,10 +164,8 @@ def train(args):
 		print(msg)
 		#print(IoU_array)	
 
-		usedLr = 0
 		for param_group in optimizer.param_groups:
 			print("LEARNING RATE: ", param_group['lr'])
-			usedLr = float(param_group['lr'])
 		#if epoch in lr_scheduer:
 		#    for param_group in optimizer.param_groups:
 		#        param_group["lr"] = lr_scheduer[epoch]
@@ -171,12 +183,18 @@ def valid(valid_loader,model,n_classes,criterion):
 			mask = mask.cuda(non_blocking=True)
 
 			pred = model.forward(image)
-			mainloss = criterion(pred[0], mask)
-			auxloss = criterion(pred[1], mask)
-			loss = 0.4*auxloss + mainloss
-			#loss = criterion(pred,mask)
+			if isinstance(pred,list):
+				mainloss = criterion(pred[0], mask)
+				auxloss = sum([criterion(pred[i], mask)*j for i,j in zip(range(1,4),[0.3,0.3,0.4])])
+				loss = auxloss + mainloss
+				confusion_matrix += get_confusion_matrix(mask,pred[0],n_classes)	
+			else:
+				loss = criterion(pred,mask)
+				confusion_matrix += get_confusion_matrix(mask,pred,n_classes)	
+			#mainloss = criterion(pred[0], mask)
+			#auxloss = criterion(pred[1], mask)
+			#loss = 0.4*auxloss + mainloss
 			ave_loss.append(loss.item())
-			confusion_matrix += get_confusion_matrix(mask,pred[0],n_classes)	
 
 	pos = confusion_matrix.sum(1)
 	res = confusion_matrix.sum(0)
@@ -192,12 +210,12 @@ if __name__ == '__main__':
 	parser.add_argument('--backbone', type=str,default='efficient')
 	parser.add_argument('--input_height', type=int, default=512)
 	parser.add_argument('--input_width', type=int, default=1024)
-	parser.add_argument('--epochs', type=int, default=400)
+	parser.add_argument('--epochs', type=int, default=300)
 	parser.add_argument('--batch_size', type=int, default=4, help='single gpu batch_size')
 	parser.add_argument('--datadir', type=str, default='./txt/')
 	parser.add_argument('--weights', type=str, default='./weights/')
-	parser.add_argument('--resume_path', type=str, default=None)
-	parser.add_argument('--lr', type=float, default=2e-4)
+	parser.add_argument('--resume_path', type=str, default= None)
+	parser.add_argument('--lr', type=float, default=1e-4)
 	parser.add_argument('--data_name', type=str, default='city',
 						help='Dataset to use',
 						choices=['ade20k','city','voc','camvid','city_split','camvid_ac','camvid_split'])

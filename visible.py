@@ -57,7 +57,7 @@ def visible(args):
 			n_classes = classes, 
 			height = args.height,
 			width = args.width,
-			resize = True,
+			val_data = True,
 	)
 
 	test_dataset_vis = Dataset(
@@ -66,10 +66,10 @@ def visible(args):
 			height = args.height,
 			width = args.width,
 			preprocessing=False,
-			resize = True,
+			val_data = True,
 	)
 
-	for i in range(3):
+	for i in range(20):
 		n = np.random.choice(len(test_dataset))
 		img_name = str(i)+'.png'
 		
@@ -93,8 +93,8 @@ if __name__ == '__main__':
 	parser.add_argument('--backbone', type=str,default='efficient')
 	parser.add_argument('--height', type=int, default=512)
 	parser.add_argument('--width', type=int, default=1024)
-	parser.add_argument('--test_txt', type=str, default='./txt/city_val.txt')
-	parser.add_argument('--model_path', type=str, default='./weights/city_best_model_dist.pth')
+	parser.add_argument('--test_txt', type=str, default='./txt/camvid_val.txt')
+	parser.add_argument('--model_path', type=str, default='./weights/city_best_model_dist_69_3.pth')
 	parser.add_argument('--train_style', type=str, default='distribute')
 	parser.add_argument('--data_name', type=str, default='city',
 						help='Dataset to use',

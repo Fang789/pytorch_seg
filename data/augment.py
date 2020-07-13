@@ -1,7 +1,6 @@
 import albumentations as A
 import numpy as np
 
-
 # define heavy augmentations
 def get_training_augmentation(height,width):
 

@@ -1,6 +1,8 @@
 import torch
+import math
 import torch.nn as nn
 import torch.nn.functional as F
+from model.jpu import SeparableConv2d
 
 def conv_bn(inp, oup, stride = 1, leaky = 0):
 	return nn.Sequential(
@@ -19,7 +21,7 @@ def conv_bn_no_relu(inp, oup, stride):
 		nn.BatchNorm2d(oup),
 	)
 
-def conv_bn1X1(inp, oup, stride, leaky=0):
+def conv_bn1X1(inp, oup, stride=1, leaky=0):
 	return nn.Sequential(
 		nn.Conv2d(inp, oup, 1, stride, padding=0, bias=False),
 		#nn.GroupNorm(32,oup),
@@ -57,7 +59,7 @@ class SSH(nn.Module):
 		return out
 
 class FPNBlock(nn.Module):
-	def __init__(self, pyramid_channels, skip_channels):
+	def __init__(self, pyramid_channels, skip_channels): #sk是输入
 		super().__init__()
 		self.skip_conv = nn.Conv2d(skip_channels, pyramid_channels, kernel_size=1)
 
@@ -67,12 +69,44 @@ class FPNBlock(nn.Module):
 		x = x + skip
 		return x
 
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+        assert kernel_size in (3,7), "kernel size must be 3 or 7"
+        padding = 3 if kernel_size == 7 else 1
+
+        self.conv = nn.Conv2d(2,1,kernel_size, padding=padding, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avgout = torch.mean(x, dim=1, keepdim=True)
+        maxout, _ = torch.max(x, dim=1, keepdim=True)
+        x = torch.cat([avgout, maxout], dim=1)
+        x = self.conv(x)
+        return self.sigmoid(x)
+
+class ChannelAttention(nn.Module):
+	def __init__(self, in_planes, ratio=16):
+		super(ChannelAttention, self).__init__()
+		self.avg_pool = nn.AdaptiveAvgPool2d(1)
+		self.max_pool = nn.AdaptiveMaxPool2d(1)
+
+		self.sharedMLP = nn.Sequential(
+			nn.Conv2d(in_planes, in_planes // ratio, 1, bias=False), nn.ReLU(),
+			nn.Conv2d(in_planes // ratio, in_planes, 1, bias=False))
+		self.sigmoid = nn.Sigmoid()
+
+	def forward(self, x):
+		avgout = self.sharedMLP(self.avg_pool(x))
+		maxout = self.sharedMLP(self.max_pool(x))
+		return self.sigmoid(avgout + maxout)	
+
 class PSPBlock(nn.Module):
 
-	def __init__(self, in_channels, out_channels, pool_size, use_bathcnorm=True):
+	def __init__(self, in_channels, out_channels, pool_size, use_batchnorm=True):
 		super().__init__()
 		if pool_size == 1:
-			use_bathcnorm = False  # PyTorch does not support BatchNorm for 1x1 shape
+			use_batchnorm = False  # PyTorch does not support BatchNorm for 1x1 shape
 		self.pool = nn.Sequential(
 			nn.AdaptiveAvgPool2d(output_size=(pool_size, pool_size)),
 			conv_bn(in_channels, out_channels, stride=1, leaky = 0)
@@ -90,7 +124,7 @@ class PSPModule(nn.Module):
 		super().__init__()
 
 		self.blocks = nn.ModuleList([
-			PSPBlock(in_channels, in_channels // len(sizes), size, use_bathcnorm=use_bathcnorm) for size in sizes
+			PSPBlock(in_channels, in_channels // len(sizes), size, use_batchnorm=use_batchnorm) for size in sizes
 		])
 
 	def forward(self, x):
@@ -113,7 +147,7 @@ class PSPHead(nn.Module):
 		self.psp = PSPModule(
 			in_channels=in_channels,
 			sizes=(1, 2, 3, 6),
-			use_bathcnorm=use_batchnorm,
+			use_batchnorm=use_batchnorm,
 		)
 
 		self.conv = conv_bn(in_channels*2, out_channels, stride=1, leaky = 0)
@@ -143,10 +177,10 @@ class Conv3x3GNReLU(nn.Module):
 			nn.ReLU(inplace=True),
 		)
 
-	def forward(self, x):
+	def forward(self, x,skip=None):
 		x = self.block(x)
 		if self.upsample:
-			x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=True)
+			x = F.interpolate(x,size=(skip.size(2),skip.size(3)), mode="bilinear",align_corners=True)
 		return x
 
 class SegmentationBlock(nn.Module):
@@ -163,3 +197,53 @@ class SegmentationBlock(nn.Module):
 
 	def forward(self, x):
 		return self.block(x)
+
+class GlobalAvgPooling(nn.Module):
+	def __init__(self, in_channels, out_channels, norm_layer=nn.BatchNorm2d):
+		super(GlobalAvgPooling, self).__init__()
+		self.gap = nn.Sequential(
+			nn.AdaptiveAvgPool2d(1),
+			nn.Conv2d(in_channels, out_channels, 1, bias=False),
+			norm_layer(out_channels),
+			nn.ReLU(True)
+		)
+	def forward(self, x):
+		size = x.size()[2:]
+		pool = self.gap(x)
+		out = F.interpolate(pool, size, mode='bilinear', align_corners=True)
+		return out
+
+class ASPP(torch.nn.Module):
+	def __init__(self, in_channels, out_channels):
+		super().__init__()
+		kernel_sizes = [1, 3, 3, 1]
+		dilations = [1, 3, 6, 1]
+		paddings = [0, 3, 6, 0]
+		self.aspp = torch.nn.ModuleList()
+		for aspp_idx in range(len(kernel_sizes)):
+			conv = torch.nn.Conv2d(
+				in_channels,
+				out_channels,
+				kernel_size=kernel_sizes[aspp_idx],
+				stride=1,
+				dilation=dilations[aspp_idx],
+				padding=paddings[aspp_idx],
+				bias=True)
+			self.aspp.append(conv)
+		self.gap = torch.nn.AdaptiveAvgPool2d(1)
+		self.aspp_num = len(kernel_sizes)
+		for m in self.modules():
+			if isinstance(m, torch.nn.Conv2d):
+				n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+				m.weight.data.normal_(0, math.sqrt(2. / n))
+				m.bias.data.fill_(0)
+
+	def forward(self, x):
+		avg_x = self.gap(x)
+		out = []
+		for aspp_idx in range(self.aspp_num):
+			inp = avg_x if (aspp_idx == self.aspp_num - 1) else x
+			out.append(F.relu_(self.aspp[aspp_idx](inp)))
+		out[-1] = out[-1].expand_as(out[-2])
+		out = torch.cat(out, dim=1)
+		return out

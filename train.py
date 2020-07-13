@@ -13,7 +13,11 @@ from loss.losses import CrossEntropy,Lovasz_Softmax
 from torch.optim import lr_scheduler,Adam,AdamW
 import cv2
 import argparse
-#torch.backends.cudnn.deterministic = True
+
+from model.lednet import LEDNet
+from model.fastscnn import  FastSCNN
+
+torch.backends.cudnn.deterministic = True
 
 
 def train(args):
@@ -33,7 +37,9 @@ def train(args):
 	n_classes = 1 if classes == 1 else classes+1
 
 	# create segmentation model with pretrained encoder
-	model = RetinaSeg(args.backbone,classes=n_classes)
+	model = RetinaSeg(args.backbone,classes=n_classes,aux=True)
+	#model =FastSCNN(n_classes)
+	#model =LEDNet(n_classes)
 	optimizer = AdamW([dict(params=model.parameters(), lr=args.lr)])
 
 	if num_gpus>1:
@@ -69,7 +75,7 @@ def train(args):
 		n_classes=classes, 
 		height=height,
 		width=width,
-		resize =True,
+		val_data =True,
 		augmentation=False,
 	)
 
@@ -77,7 +83,7 @@ def train(args):
 	valid_loader = DataLoader(valid_dataset, batch_size=1,shuffle=False,num_workers=4,pin_memory=True)#
 
 	class_weight = get_class_weight(args.data_name)
-	criterion = CrossEntropy(weight=class_weight).cuda()#weight=class_weigh
+	criterion = CrossEntropy(weight=class_weight).cuda()#weight=class_weight
 	#lambda1 = lambda epoch: pow((1-((epoch-1)/args.epochs)),0.9)
 	#scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda1)
 
@@ -96,7 +102,10 @@ def train(args):
 
 			optimizer.zero_grad()
 			prediction = parallel_model.forward(image)
-			loss = criterion(prediction, mask)
+			#loss = criterion(prediction, mask)
+			mainloss = criterion(prediction[0], mask)
+			auxloss = sum([criterion(prediction[i], mask)*j for i,j in zip(range(1,4),[0.4,0.25,0.1])])
+			loss = auxloss + mainloss
 			loss.backward()
 			optimizer.step()
 			
@@ -141,9 +150,15 @@ def valid(valid_loader,model,n_classes,criterion):
 			mask = mask.cuda(non_blocking=True)
 
 			pred = model.forward(image)
-			loss = criterion(pred,mask)
+			mainloss = criterion(pred[0], mask)
+			auxloss = sum([criterion(pred[i], mask)*j for i,j in zip(range(1,4),[0.4,0.25,0.1])])
+			loss = auxloss + mainloss
+			#mainloss = criterion(pred[0], mask)
+			#auxloss = criterion(pred[1], mask)
+			#loss = 0.4*auxloss + mainloss
+			#loss = criterion(pred,mask)
 			ave_loss.append(loss.item())
-			confusion_matrix += get_confusion_matrix(mask,pred,n_classes)	
+			confusion_matrix += get_confusion_matrix(mask,pred[0],n_classes)	
 
 	pos = confusion_matrix.sum(1)
 	res = confusion_matrix.sum(0)
@@ -159,13 +174,13 @@ if __name__ == '__main__':
 	parser.add_argument('--backbone', type=str,default='efficient')
 	parser.add_argument('--input_height', type=int, default=360)
 	parser.add_argument('--input_width', type=int, default=480)
-	parser.add_argument('--epochs', type=int, default=50)
-	parser.add_argument('--batch_size', type=int, default=4, help='single gpu batch_size')
+	parser.add_argument('--epochs', type=int, default=100)
+	parser.add_argument('--batch_size', type=int, default=2, help='single gpu batch_size')
 	parser.add_argument('--datadir', type=str, default='./txt/')
 	parser.add_argument('--weights', type=str, default='./weights/')
 	parser.add_argument('--resume_path', type=str, default=None)
 	parser.add_argument('--lr', type=float, default=1e-3)
-	parser.add_argument('--data_name', type=str, default='city',
+	parser.add_argument('--data_name', type=str, default='camvid_ac',
 						help='Dataset to use',
 						choices=['ade20k','city','voc','camvid','city_split','camvid_ac'])
 	parser.add_argument('--gpu_id', type=str, default='0,1')

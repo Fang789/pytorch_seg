@@ -1,6 +1,5 @@
-*.pth
-*.jpg
 *.png
 *.swp
-*.txt
 *.pyc
+*.jpg
+*.pth

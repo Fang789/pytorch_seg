@@ -4,7 +4,7 @@ from . import functional as Fu
 from torch.nn import functional as F
 
 class CrossEntropy(nn.Module):
-	def __init__(self, ignore_label=-1, weight=None):
+	def __init__(self, ignore_label=255, weight=None):
 		super(CrossEntropy, self).__init__()
 		self.ignore_label = ignore_label
 		self.criterion = nn.CrossEntropyLoss(weight=weight, 
@@ -16,13 +16,12 @@ class CrossEntropy(nn.Module):
 		if ph != h or pw != w:
 			score = F.upsample(
 					input=score, size=(h, w), mode='bilinear')
-
 		loss = self.criterion(score, target)
 
 		return loss
 
 class OhemCrossEntropy(nn.Module): 
-	def __init__(self, ignore_label=-1, thres=0.7, 
+	def __init__(self, ignore_label=255, thres=0.7, 
 		min_kept=100000, weight=None): 
 		super(OhemCrossEntropy, self).__init__() 
 		self.thresh = thres
@@ -51,6 +50,16 @@ class OhemCrossEntropy(nn.Module):
 		pixel_losses = pixel_losses[mask][ind]
 		pixel_losses = pixel_losses[pred < threshold] 
 		return pixel_losses.mean()
+
+class FocalLoss2d(nn.Module):
+	def __init__(self,alpha=0.25,gamma=2, weight=None, ignore_index=255):
+		super(FocalLoss2d, self).__init__()
+		self.gamma = gamma
+		self.alpha = alpha
+		self.nll_loss = nn.NLLLoss(weight,ignore_index)
+
+	def forward(self, inputs, targets):
+		return self.nll_loss(self.alpha*(1 - F.softmax(inputs,dim=1)) ** self.gamma * F.log_softmax(inputs,dim=1), targets)
 
 class JaccardLoss(nn.Module):
 
@@ -85,6 +94,30 @@ class DiceLoss(nn.Module):
 			threshold=None,
 			ignore_channels=self.ignore_channels,
 		)
+
+class Lovasz_Softmax(nn.Module):
+	"""
+	Multi-class Lovasz-Softmax loss
+	  probas: [B, C, H, W] Variable, class probabilities at each prediction (between 0 and 1).
+			  Interpreted as binary (sigmoid) output with outputs of size [B, H, W].
+	  labels: [B, H, W] Tensor, ground truth labels (between 0 and C - 1)
+	  classes: 'all' for all, 'present' for classes present in labels, or a list of classes to average.
+	  per_image: compute the loss per image instead of per batch
+	  ignore: void class labels
+	"""
+	def __init__(self,ignore_label=255,classes='present',per_image=False):
+		super(Lovasz_Softmax, self).__init__()
+		self.ignore = ignore_label
+		self.classes = classes
+		self.per_image = per_image
+
+	def forward(self,probas,labels):
+		if self.per_image:
+			loss = mean(Fu.lovasz_softmax_flat(*Fu.flatten_probas(prob.unsqueeze(0), 
+				lab.unsqueeze(0), self.ignore), classes=self.classes)for prob, lab in zip(probas, labels))
+		else:
+			loss = Fu.lovasz_softmax_flat(*Fu.flatten_probas(probas, labels, self.ignore), classes=self.classes)
+		return loss
 
 class CategoricalCELoss(nn.Module):
 
@@ -121,4 +154,3 @@ class CategoricalFocalLoss(nn.Module):
 			gamma=self.gamma,
 			ignore_channels=self.ignore_channels,
 		)
-

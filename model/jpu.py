@@ -25,7 +25,9 @@ class JPU(nn.Module):
 
 		#norm_layer = lambda n_channels: nn.GroupNorm(32, n_channels)
 		self.conv5 = nn.Sequential(
+			#nn.Conv2d(in_channels[-1], width, (3,1), padding=(1,0), bias=False),
 			nn.Conv2d(in_channels[-1], width, 3, padding=1, bias=False),
+			#nn.Conv2d(in_channels[-1], width, (1,3), padding=(0,1), bias=False),
 			norm_layer(width),
 			nn.ReLU(inplace=True))
 
@@ -40,20 +42,20 @@ class JPU(nn.Module):
 			nn.ReLU(inplace=True))
 
 		self.dilation1 = nn.Sequential(SeparableConv2d(3*width, width, kernel_size=3, padding=1, dilation=1, bias=False),
-									   norm_layer(width),
-									   nn.ReLU(inplace=True))
+										norm_layer(width),
+										nn.ReLU(inplace=True))
 
 		self.dilation2 = nn.Sequential(SeparableConv2d(3*width, width, kernel_size=3, padding=2, dilation=2, bias=False),
-									   norm_layer(width),
-									   nn.ReLU(inplace=True))
+										norm_layer(width),
+										nn.ReLU(inplace=True))
 
-		self.dilation3 = nn.Sequential(SeparableConv2d(3*width, width, kernel_size=3, padding=4, dilation=4, bias=False),
-									   norm_layer(width),
-									   nn.ReLU(inplace=True))
+		self.dilation3 = nn.Sequential(SeparableConv2d(3*width, width, kernel_size=3,padding=4, dilation=4, bias=False),
+										norm_layer(width),
+										nn.ReLU(inplace=True))
 
 		self.dilation4 = nn.Sequential(SeparableConv2d(3*width, width, kernel_size=3, padding=8, dilation=8, bias=False),
-									   norm_layer(width),
-									   nn.ReLU(inplace=True))
+										norm_layer(width),
+										nn.ReLU(inplace=True))
 
 	def forward(self, inputs):
 		feats = [self.conv5(inputs[-1]), self.conv4(inputs[-2]), self.conv3(inputs[-3])]

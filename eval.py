@@ -129,7 +129,7 @@ def test(args):
 			n_classes = classes, 
 			height = args.height,
 			width = args.width,
-			resize = True,
+			val_data = True,
 			augmentation = False,
 	)
 	test_dataloader = DataLoader(test_dataset,batch_size=1,shuffle=False)
@@ -158,13 +158,13 @@ def test(args):
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
 	parser.add_argument('--backbone', type=str,default='efficient')
-	parser.add_argument('--height', type=int, default=512)
-	parser.add_argument('--width', type=int, default=1024)
-	parser.add_argument('--base_size', type=int, default=1024,help="img max edge")
-	parser.add_argument('--test_txt', type=str, default='./txt/city_val.txt')
-	parser.add_argument('--model_path', type=str, default='./weights/city_best_model_dist.pth')
+	parser.add_argument('--height', type=int, default=360)
+	parser.add_argument('--width', type=int, default=480)
+	parser.add_argument('--base_size', type=int, default=480,help="img max edge")
+	parser.add_argument('--test_txt', type=str, default='./txt/camvid_val.txt')
+	parser.add_argument('--model_path', type=str, default='./weights/camvid_best_model_dist_73_7.pth')
 	parser.add_argument('--train_style', type=str, default='distribute')
-	parser.add_argument('--data_name', type=str, default='city',
+	parser.add_argument('--data_name', type=str, default='camvid',
 						help='Dataset to use',
 						choices=['ade20k','city','voc','camvid'])
 	parser.add_argument('--gpu_id', type=str, default='1')

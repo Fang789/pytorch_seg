@@ -167,7 +167,7 @@ class Dataset(BaseDataset):
    
 if __name__=="__main__":
 	
-	train_txt="../txt/city_split_train.txt"
+	train_txt="../txt/city_val.txt"
 	height,width = 512,1024
-	train_dataset = Dataset(train_txt,height=height,width=width,n_classes=19,augmentation=True)
+	train_dataset = Dataset(train_txt,height=height,width=width,n_classes=19,augmentation=True,val_data=True)
 	print(train_dataset[0])
